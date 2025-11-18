@@ -7,11 +7,13 @@ from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional, Dict, Any
 import os
 from datetime import datetime
 import logging
+import unicodedata
 
 from services.servico_ia import AIService
 from services.servico_recomendacoes import ServicoRecomendacoes
@@ -57,6 +59,132 @@ ai_service = AIService()
 banco_cursos = BancoCursos()
 recommendation_service = ServicoRecomendacoes(ai_service)
 profile_analyzer = AnalisadorPerfil(ai_service)
+
+
+# ==================== FUNÇÕES AUXILIARES ====================
+
+def normalize_area_name(area: str) -> str:
+    """
+    Normaliza o nome da área removendo acentos e convertendo para minúsculas.
+    Também mapeia nomes amigáveis para IDs de áreas.
+    """
+    # Mapeamento de nomes amigáveis para IDs
+    area_mapping = {
+        # IA
+        "ia": "ia",
+        "inteligencia artificial": "ia",
+        "inteligência artificial": "ia",
+        "ai": "ia",
+        
+        # Ciência de Dados
+        "ciencia de dados": "ciencia_dados",
+        "ciência de dados": "ciencia_dados",
+        "ciencia_dados": "ciencia_dados",
+        "data science": "ciencia_dados",
+        "cienciadados": "ciencia_dados",
+        
+        # Sustentabilidade
+        "sustentabilidade": "sustentabilidade",
+        "sustentavel": "sustentabilidade",
+        "sustentável": "sustentabilidade",
+        "meio ambiente": "sustentabilidade",
+        "ambiental": "sustentabilidade",
+        
+        # Programação
+        "programacao": "programacao",
+        "programação": "programacao",
+        "desenvolvimento": "programacao",
+        "software": "programacao",
+        "dev": "programacao",
+        
+        # Design
+        "design": "design",
+        "design grafico": "design",
+        "design gráfico": "design",
+        "ui/ux": "design",
+        "ui": "design",
+        "ux": "design",
+        
+        # Marketing Digital
+        "marketing digital": "marketing_digital",
+        "marketing_digital": "marketing_digital",
+        "marketing": "marketing_digital",
+        "digital marketing": "marketing_digital",
+        "marketingdigital": "marketing_digital",
+        
+        # Gestão
+        "gestao": "gestao",
+        "gestão": "gestao",
+        "administracao": "gestao",
+        "administração": "gestao",
+        "management": "gestao",
+        "gerenciamento": "gestao",
+        
+        # Vendas
+        "vendas": "vendas",
+        "vendas consultivas": "vendas",
+        "vendasconsultivas": "vendas",
+        "sales": "vendas",
+        "negociacao": "vendas",
+        "negociação": "vendas",
+        
+        # RH
+        "rh": "rh",
+        "recursos humanos": "rh",
+        "recursoshumanos": "rh",
+        "gestao de pessoas": "rh",
+        "gestão de pessoas": "rh",
+        "hr": "rh",
+        "human resources": "rh",
+        
+        # Finanças
+        "financas": "financas",
+        "finanças": "financas",
+        "financeiro": "financas",
+        "contabilidade": "financas",
+        "finance": "financas",
+        
+        # Saúde
+        "saude": "saude",
+        "saúde": "saude",
+        "saude e bem estar": "saude",
+        "saúde e bem estar": "saude",
+        "health": "saude",
+        "saudebemestar": "saude",
+        
+        # Educação
+        "educacao": "educacao",
+        "educação": "educacao",
+        "pedagogia": "educacao",
+        "ensino": "educacao",
+        "education": "educacao",
+        "ead": "educacao",
+    }
+    
+    # Normalizar: remover acentos e converter para minúsculas
+    area_normalized = unicodedata.normalize('NFD', area.lower().strip())
+    area_normalized = ''.join(char for char in area_normalized if unicodedata.category(char) != 'Mn')
+    
+    # Remover espaços extras e caracteres especiais
+    area_normalized = area_normalized.replace(' ', '_').replace('/', '').replace('-', '')
+    
+    # Verificar no mapeamento
+    if area_normalized in area_mapping:
+        return area_mapping[area_normalized]
+    
+    # Verificar também com espaços
+    area_with_spaces = area.lower().strip()
+    if area_with_spaces in area_mapping:
+        return area_mapping[area_with_spaces]
+    
+    # Se não está no mapeamento, retornar normalizado
+    return area_normalized
+
+
+def get_available_areas() -> List[str]:
+    """Retorna lista de IDs de áreas disponíveis no banco"""
+    todos_cursos = banco_cursos.get_all_courses()
+    return sorted(set(curso.area for curso in todos_cursos))
 
 
 # ==================== MODELOS DE DADOS ====================
@@ -135,6 +263,12 @@ class HealthCheck(BaseModel):
     service: str
     timestamp: str
     ai_service_status: Optional[str] = None
+
+
+class ExplanationRequest(BaseModel):
+    """Modelo para requisição de explicação de curso"""
+    course: Course = Field(..., description="Curso para explicar")
+    user_profile: UserProfile = Field(..., description="Perfil do usuário")
 
 
 # ==================== ENDPOINTS ====================
@@ -282,27 +416,55 @@ async def analyze_profile(profile: UserProfile):
 
 
 @app.post("/api/ai/generate-explaination")
-async def generate_explanation(
-    course: Course,
-    user_profile: UserProfile
-):
+async def generate_explanation(request: ExplanationRequest):
     """
     Endpoint para gerar explicação personalizada de por que um curso foi recomendado
     
     Usa IA Generativa para criar uma explicação contextual baseada no perfil do usuário
+    
+    **Body (JSON):**
+    ```json
+    {
+      "course": {
+        "id": "1",
+        "titulo": "Python Básico",
+        "descricao": "Curso introdutório de Python",
+        "area": "programacao",
+        "nivel": "iniciante",
+        "duracao": "40 horas"
+      },
+      "user_profile": {
+        "user_id": "123",
+        "areas_interesse": [
+          {"area": "programacao", "nivel": "iniciante"}
+        ]
+      }
+    }
+    ```
     """
     try:
+        logger.info(f"Generating explanation for course {request.course.id} and user {request.user_profile.user_id}")
+        
         explanation = await recommendation_service.gerar_explicacao_curso(
-            course=course,
-            user_profile=user_profile
+            curso=request.course,
+            perfil_usuario=request.user_profile
         )
+        
+        logger.info(f"Explanation generated successfully for course {request.course.id}")
+        
         return {
-            "course_id": course.id,
+            "course_id": request.course.id,
             "explanation": explanation,
-            "generated_at": datetime.now().isoformat()
+            "generated_at": datetime.now().isoformat(),
+            "model_used": ai_service.get_model_name()
         }
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
     except Exception as e:
         logger.error(f"Error generating explanation: {str(e)}", exc_info=True)
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
             detail=f"Error generating explanation: {str(e)}"
@@ -321,10 +483,18 @@ async def get_areas():
         
         # Áreas com nomes amigáveis e ícones
         areas_info = {
-            "programacao": {"nome": "Programação", "icone": "💻", "descricao": "Cursos de desenvolvimento de software"},
             "ia": {"nome": "Inteligência Artificial", "icone": "🤖", "descricao": "IA, Machine Learning e Deep Learning"},
-            "iot": {"nome": "Internet das Coisas", "icone": "🌐", "descricao": "IoT, robótica e sistemas embarcados"},
-            "seguranca": {"nome": "Segurança", "icone": "🔒", "descricao": "Cibersegurança e segurança da informação"}
+            "ciencia_dados": {"nome": "Ciência de Dados", "icone": "📊", "descricao": "Análise de dados, Big Data e Data Science"},
+            "sustentabilidade": {"nome": "Sustentabilidade", "icone": "🌱", "descricao": "Meio ambiente, energia limpa e práticas sustentáveis"},
+            "programacao": {"nome": "Programação", "icone": "💻", "descricao": "Cursos de desenvolvimento de software"},
+            "design": {"nome": "Design", "icone": "🎨", "descricao": "Design gráfico, UI/UX e design thinking"},
+            "marketing_digital": {"nome": "Marketing Digital", "icone": "📱", "descricao": "Marketing digital, redes sociais e SEO"},
+            "gestao": {"nome": "Gestão", "icone": "📋", "descricao": "Administração, liderança e gestão de projetos"},
+            "vendas": {"nome": "Vendas", "icone": "💼", "descricao": "Técnicas de vendas, negociação e CRM"},
+            "rh": {"nome": "Recursos Humanos", "icone": "👤", "descricao": "Gestão de pessoas, recrutamento e desenvolvimento"},
+            "financas": {"nome": "Finanças", "icone": "💰", "descricao": "Finanças pessoais, empresariais e investimentos"},
+            "saude": {"nome": "Saúde", "icone": "💚", "descricao": "Saúde, bem-estar e nutrição"},
+            "educacao": {"nome": "Educação", "icone": "📖", "descricao": "Pedagogia, metodologias de ensino e EAD"}
         }
         
         # Contar cursos por área
@@ -360,7 +530,8 @@ async def get_all_courses(area: Optional[str] = None, nivel: Optional[str] = Non
     Pode filtrar por área ou nível.
     
     Query parameters:
-    - area: Filtrar por área (programacao, ia, iot, seguranca)
+    - area: Filtrar por área (ia, ciencia_dados, sustentabilidade, programacao, design, 
+      marketing_digital, gestao, vendas, rh, financas, saude, educacao)
     - nivel: Filtrar por nível (iniciante, intermediario, avancado)
     """
     try:
@@ -428,15 +599,81 @@ async def get_course_by_id(course_id: str):
 async def get_courses_by_area(area: str):
     """
     Retorna todos os cursos de uma área específica.
-    Áreas disponíveis: programacao, ia, iot, seguranca
+    
+    A área pode ser informada com ou sem acentos, em maiúsculas ou minúsculas.
+    Exemplos válidos:
+    - ia, IA, Inteligência Artificial
+    - ciencia_dados, ciência de dados, Ciência de Dados
+    - sustentabilidade, Sustentabilidade
+    - programacao, programação, Programação
+    - design, Design
+    - marketing_digital, Marketing Digital, marketing digital
+    - gestao, gestão, Gestão
+    - vendas, Vendas
+    - rh, RH, Recursos Humanos
+    - financas, finanças, Finanças
+    - saude, saúde, Saúde
+    - educacao, educação, Educação
+    
+    Áreas disponíveis: ia, ciencia_dados, sustentabilidade, programacao, design, 
+    marketing_digital, gestao, vendas, rh, financas, saude, educacao
     """
     try:
-        cursos = banco_cursos.get_courses_by_area(area)
+        # Normalizar área (remover acentos, converter para minúsculas, mapear nomes)
+        area_normalized = normalize_area_name(area)
+        logger.info(f"Requested area: '{area}' -> normalized: '{area_normalized}'")
+        
+        # Verificar se a área existe
+        available_areas = get_available_areas()
+        
+        # Buscar cursos
+        cursos = banco_cursos.get_courses_by_area(area_normalized)
+        
+        # Se não encontrou cursos e a área normalizada não está na lista de áreas disponíveis
+        if not cursos and area_normalized not in available_areas:
+            # Mapear IDs para nomes amigáveis para a mensagem de erro
+            area_names = {
+                "ia": "Inteligência Artificial",
+                "ciencia_dados": "Ciência de Dados",
+                "sustentabilidade": "Sustentabilidade",
+                "programacao": "Programação",
+                "design": "Design",
+                "marketing_digital": "Marketing Digital",
+                "gestao": "Gestão",
+                "vendas": "Vendas",
+                "rh": "Recursos Humanos",
+                "financas": "Finanças",
+                "saude": "Saúde",
+                "educacao": "Educação"
+            }
+            available_names = [area_names.get(a, a) for a in available_areas]
+            
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "Area not found",
+                    "message": f"Área '{area}' não encontrada.",
+                    "requested_area": area,
+                    "normalized_area": area_normalized,
+                    "available_areas": available_areas,
+                    "available_areas_names": available_names,
+                    "hint": f"Use uma das áreas disponíveis: {', '.join(available_areas)}. "
+                           f"Você pode usar nomes amigáveis como 'Programação', 'IA', etc."
+                }
+            )
+        
+        # Se a área existe mas não tem cursos (caso raro)
         if not cursos:
             raise HTTPException(
                 status_code=404,
-                detail=f"No courses found for area: {area}"
+                detail={
+                    "error": "No courses found",
+                    "message": f"Nenhum curso encontrado para a área '{area_normalized}'.",
+                    "area": area_normalized
+                }
             )
+        
+        logger.info(f"Found {len(cursos)} courses for area '{area_normalized}'")
         
         return [Course(
             id=curso.id,
@@ -451,6 +688,8 @@ async def get_courses_by_area(area: str):
         raise
     except Exception as e:
         logger.error(f"Error getting courses by area: {str(e)}", exc_info=True)
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
             detail=f"Error getting courses by area: {str(e)}"
@@ -469,6 +708,66 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "details": exc.errors(),
             "timestamp": datetime.now().isoformat()
         }
+    )
+
+
+# Handler para métodos HTTP não permitidos (405)
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Handler para erros HTTP incluindo 405 Method Not Allowed"""
+    if exc.status_code == 405:
+        # Ordenar por especificidade (mais específicos primeiro)
+        allowed_methods = [
+            ("/api/courses/suggested/", ["POST"]),
+            ("/api/courses/area/", ["GET"]),
+            ("/api/courses/", ["GET"]),  # Para /api/courses/{course_id}
+            ("/api/courses", ["GET"]),
+            ("/api/ai/analyze-profile", ["POST"]),
+            ("/api/ai/generate-explaination", ["POST"]),
+            ("/api/areas", ["GET"]),
+            ("/health", ["GET"]),
+            ("/", ["GET"])
+        ]
+        
+        path = request.url.path
+        method = request.method
+        
+        # Encontrar endpoint similar (verificando do mais específico para o menos específico)
+        suggested_method = None
+        for endpoint_pattern, methods in allowed_methods:
+            # Verificar se o path começa com o padrão
+            if path.startswith(endpoint_pattern) or endpoint_pattern.startswith(path):
+                suggested_method = methods[0]
+                break
+            # Verificar padrões com parâmetros
+            if "{user_id}" in endpoint_pattern or "{course_id}" in endpoint_pattern or "{area}" in endpoint_pattern:
+                pattern_base = endpoint_pattern.replace("{user_id}", "").replace("{course_id}", "").replace("{area}", "").replace("//", "/")
+                if path.startswith(pattern_base) and path != pattern_base:
+                    suggested_method = methods[0]
+                    break
+        
+        error_msg = {
+            "error": "Method Not Allowed",
+            "message": f"O método {method} não é permitido para o endpoint {path}",
+            "requested_method": method,
+            "requested_path": path,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        if suggested_method:
+            error_msg["suggestion"] = {
+                "correct_method": suggested_method,
+                "hint": f"Use {suggested_method} para este endpoint. "
+                       f"Exemplo: {suggested_method} {path}"
+            }
+        
+        logger.warning(f"Method not allowed: {method} {path}")
+        return JSONResponse(status_code=405, content=error_msg)
+    
+    # Para outros erros HTTP, retornar padrão
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "timestamp": datetime.now().isoformat()}
     )
 
 
