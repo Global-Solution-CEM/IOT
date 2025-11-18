@@ -3,10 +3,11 @@ Aprenda Plus - AI Course Recommendation API
 Backend FastAPI com integração de IA Generativa para recomendações personalizadas de cursos
 """
 
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional, Dict, Any
 import os
 from datetime import datetime
@@ -62,19 +63,35 @@ profile_analyzer = AnalisadorPerfil(ai_service)
 
 class AreaInterest(BaseModel):
     """Modelo para área de interesse do usuário"""
-    area: str = Field(..., description="ID da área de interesse")
-    nivel: str = Field(..., description="Nível de conhecimento (iniciante, intermediario, avancado)")
+    area: str = Field(
+        ..., 
+        description="ID da área de interesse (programacao, ia, iot, seguranca)",
+        examples=["programacao"]
+    )
+    nivel: str = Field(
+        ..., 
+        description="Nível de conhecimento (iniciante, intermediario, avancado)",
+        examples=["intermediario"]
+    )
 
 
 class UserProfile(BaseModel):
     """Modelo para perfil do usuário"""
-    user_id: str = Field(..., description="ID único do usuário")
-    name: Optional[str] = Field(None, description="Nome do usuário")
-    email: Optional[str] = Field(None, description="Email do usuário")
-    areas_interesse: List[AreaInterest] = Field(..., description="Lista de áreas de interesse com níveis")
-    cursos_completos: Optional[List[str]] = Field(default=[], description="IDs de cursos completados")
-    cursos_em_andamento: Optional[List[str]] = Field(default=[], description="IDs de cursos em andamento")
-    progresso_cursos: Optional[Dict[str, int]] = Field(default={}, description="Progresso por curso (curso_id: porcentagem)")
+    user_id: str = Field(
+        ..., 
+        description="ID único do usuário (DEVE ser igual ao user_id da URL)",
+        examples=["121344"]
+    )
+    name: Optional[str] = Field(None, description="Nome do usuário", examples=["João Silva"])
+    email: Optional[str] = Field(None, description="Email do usuário", examples=["joao@example.com"])
+    areas_interesse: List[AreaInterest] = Field(
+        ..., 
+        description="Lista de áreas de interesse com níveis (mínimo 1 área)",
+        examples=[[{"area": "programacao", "nivel": "intermediario"}]]
+    )
+    cursos_completos: Optional[List[str]] = Field(default=[], description="IDs de cursos completados", examples=[["1", "5"]])
+    cursos_em_andamento: Optional[List[str]] = Field(default=[], description="IDs de cursos em andamento", examples=[["2"]])
+    progresso_cursos: Optional[Dict[str, int]] = Field(default={}, description="Progresso por curso (curso_id: porcentagem)", examples=[{"2": 45}])
 
 
 class Course(BaseModel):
@@ -158,7 +175,7 @@ async def health_check():
 async def get_suggested_courses(
     user_id: str,
     request: RecommendationRequest,
-    limit: Optional[int] = 10
+    limit: Optional[int] = None
 ):
     """
     Endpoint principal para obter recomendações personalizadas de cursos
@@ -170,24 +187,52 @@ async def get_suggested_courses(
     - Analisar compatibilidade e pré-requisitos
     """
     try:
-        logger.info(f"Processing recommendation request for user: {user_id}")
+        # Normalizar user_id removendo aspas extras (problema do Swagger UI)
+        normalized_path_user_id = user_id.strip('"').strip("'")
+        normalized_body_user_id = str(request.user_profile.user_id).strip('"').strip("'")
         
-        # Validar que user_id corresponde ao perfil
-        if request.user_profile.user_id != user_id:
+        logger.info(f"Processing recommendation request for user: {normalized_path_user_id}, limit={limit}")
+        logger.info(f"Path user_id (normalized): {normalized_path_user_id}")
+        logger.info(f"Body user_id (normalized): {normalized_body_user_id}")
+        logger.info(f"Request body areas_interesse: {len(request.user_profile.areas_interesse or [])} areas")
+        
+        # Validar que user_id corresponde ao perfil (comparação normalizada)
+        if normalized_body_user_id != normalized_path_user_id:
+            logger.warning(f"User ID mismatch: path={normalized_path_user_id}, body={normalized_body_user_id}")
             raise HTTPException(
                 status_code=400,
-                detail="User ID in path does not match user_id in profile"
+                detail=f"User ID no caminho da URL ({normalized_path_user_id}) deve ser igual ao user_id no JSON do body ({normalized_body_user_id}). "
+                       f"Altere o 'user_id' no JSON para '{normalized_path_user_id}' ou use a URL: /api/courses/suggested/{normalized_body_user_id}"
             )
         
+        # Usar user_id normalizado para o resto do código
+        user_id = normalized_path_user_id
+        
+        # Validar que há pelo menos uma área de interesse
+        if not request.user_profile.areas_interesse or len(request.user_profile.areas_interesse) == 0:
+            logger.warning(f"No areas of interest provided for user: {user_id}")
+            raise HTTPException(
+                status_code=400,
+                detail="É necessário fornecer pelo menos uma área de interesse (areas_interesse)"
+            )
+        
+        # Determinar o limite (prioridade: query param > body > default)
+        final_limit = limit if limit is not None else (request.limit if request.limit else 10)
+        final_limit = max(1, min(20, final_limit))  # Garantir entre 1 e 20
+        
+        logger.info(f"Using limit: {final_limit} for user: {user_id}")
+        
         # Analisar perfil do usuário com IA
+        logger.info(f"Starting profile analysis for user: {user_id}")
         profile_analysis = await profile_analyzer.analisar_perfil(request.user_profile)
         logger.info(f"Profile analysis completed for user: {user_id}")
         
         # Gerar recomendações usando IA Generativa
+        logger.info(f"Starting recommendations generation for user: {user_id}")
         recommendations = await recommendation_service.gerar_recomendacoes(
             perfil_usuario=request.user_profile,
             analise_perfil=profile_analysis,
-            limit=limit or request.limit
+            limit=final_limit
         )
         
         logger.info(f"Generated {len(recommendations)} recommendations for user: {user_id}")
@@ -200,8 +245,13 @@ async def get_suggested_courses(
             model_used=ai_service.get_model_name()
         )
         
+    except HTTPException:
+        # Re-raise HTTP exceptions (como 400)
+        raise
     except Exception as e:
-        logger.error(f"Error generating recommendations: {str(e)}", exc_info=True)
+        logger.error(f"Error generating recommendations for user {user_id}: {str(e)}", exc_info=True)
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
             detail=f"Error generating recommendations: {str(e)}"
@@ -407,10 +457,27 @@ async def get_courses_by_area(area: str):
         )
 
 
+# Handler para erros de validação do Pydantic
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error(f"Validation error: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "Validation error",
+            "message": "Os dados enviados são inválidos. Verifique o formato da requisição.",
+            "details": exc.errors(),
+            "timestamp": datetime.now().isoformat()
+        }
+    )
+
+
 # Handler para erros globais
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    import traceback
+    logger.error(f"Traceback: {traceback.format_exc()}")
     return JSONResponse(
         status_code=500,
         content={
