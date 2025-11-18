@@ -17,6 +17,7 @@ from services.servico_recomendacoes import ServicoRecomendacoes
 from services.analisador_perfil import AnalisadorPerfil
 from models.perfil_usuario import PerfilUsuario, AreaInteresse
 from models.curso import Curso
+from data.banco_cursos import BancoCursos
 
 # Manter aliases para compatibilidade
 UserProfile = PerfilUsuario
@@ -52,6 +53,7 @@ app.add_middleware(
 
 # Inicializar serviços
 ai_service = AIService()
+banco_cursos = BancoCursos()
 recommendation_service = ServicoRecomendacoes(ai_service)
 profile_analyzer = AnalisadorPerfil(ai_service)
 
@@ -254,6 +256,154 @@ async def generate_explanation(
         raise HTTPException(
             status_code=500,
             detail=f"Error generating explanation: {str(e)}"
+        )
+
+
+@app.get("/api/areas", response_model=List[Dict[str, Any]])
+async def get_areas():
+    """
+    Retorna todas as áreas de cursos disponíveis no sistema.
+    Útil para o app mobile mostrar as categorias disponíveis.
+    """
+    try:
+        todos_cursos = banco_cursos.get_all_courses()
+        areas = {}
+        
+        # Áreas com nomes amigáveis e ícones
+        areas_info = {
+            "programacao": {"nome": "Programação", "icone": "💻", "descricao": "Cursos de desenvolvimento de software"},
+            "ia": {"nome": "Inteligência Artificial", "icone": "🤖", "descricao": "IA, Machine Learning e Deep Learning"},
+            "iot": {"nome": "Internet das Coisas", "icone": "🌐", "descricao": "IoT, robótica e sistemas embarcados"},
+            "seguranca": {"nome": "Segurança", "icone": "🔒", "descricao": "Cibersegurança e segurança da informação"}
+        }
+        
+        # Contar cursos por área
+        for curso in todos_cursos:
+            if curso.area not in areas:
+                area_info = areas_info.get(curso.area, {
+                    "nome": curso.area.title(),
+                    "icone": "📚",
+                    "descricao": f"Cursos de {curso.area}"
+                })
+                areas[curso.area] = {
+                    "id": curso.area,
+                    "nome": area_info["nome"],
+                    "icone": area_info["icone"],
+                    "descricao": area_info["descricao"],
+                    "total_cursos": 0
+                }
+            areas[curso.area]["total_cursos"] += 1
+        
+        return list(areas.values())
+    except Exception as e:
+        logger.error(f"Error getting areas: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting areas: {str(e)}"
+        )
+
+
+@app.get("/api/courses", response_model=List[Course])
+async def get_all_courses(area: Optional[str] = None, nivel: Optional[str] = None):
+    """
+    Retorna todos os cursos disponíveis.
+    Pode filtrar por área ou nível.
+    
+    Query parameters:
+    - area: Filtrar por área (programacao, ia, iot, seguranca)
+    - nivel: Filtrar por nível (iniciante, intermediario, avancado)
+    """
+    try:
+        if area:
+            cursos = banco_cursos.get_courses_by_area(area)
+        elif nivel:
+            cursos = banco_cursos.get_courses_by_level(nivel)
+        else:
+            cursos = banco_cursos.get_all_courses()
+        
+        # Filtrar por nível se especificado e não foi o filtro principal
+        if nivel and area:
+            cursos = [c for c in cursos if c.nivel == nivel]
+        
+        return [Course(
+            id=curso.id,
+            titulo=curso.titulo,
+            descricao=curso.descricao,
+            area=curso.area,
+            nivel=curso.nivel,
+            duracao=curso.duracao,
+            icone=curso.icone
+        ) for curso in cursos]
+    except Exception as e:
+        logger.error(f"Error getting courses: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting courses: {str(e)}"
+        )
+
+
+@app.get("/api/courses/{course_id}", response_model=Course)
+async def get_course_by_id(course_id: str):
+    """
+    Busca um curso específico por ID.
+    """
+    try:
+        curso = banco_cursos.get_course_by_id(course_id)
+        if not curso:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Course with ID {course_id} not found"
+            )
+        
+        return Course(
+            id=curso.id,
+            titulo=curso.titulo,
+            descricao=curso.descricao,
+            area=curso.area,
+            nivel=curso.nivel,
+            duracao=curso.duracao,
+            icone=curso.icone
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting course: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting course: {str(e)}"
+        )
+
+
+@app.get("/api/courses/area/{area}", response_model=List[Course])
+async def get_courses_by_area(area: str):
+    """
+    Retorna todos os cursos de uma área específica.
+    Áreas disponíveis: programacao, ia, iot, seguranca
+    """
+    try:
+        cursos = banco_cursos.get_courses_by_area(area)
+        if not cursos:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No courses found for area: {area}"
+            )
+        
+        return [Course(
+            id=curso.id,
+            titulo=curso.titulo,
+            descricao=curso.descricao,
+            area=curso.area,
+            nivel=curso.nivel,
+            duracao=curso.duracao,
+            icone=curso.icone
+        ) for curso in cursos]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting courses by area: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting courses by area: {str(e)}"
         )
 
 
