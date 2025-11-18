@@ -4,6 +4,7 @@ Gera recomendações personalizadas de cursos baseadas no perfil do usuário
 """
 
 import logging
+import unicodedata
 from typing import List, Dict, Any
 from models.perfil_usuario import PerfilUsuario, AreaInteresse
 from models.curso import Curso
@@ -11,6 +12,124 @@ from services.servico_ia import AIService
 from data.banco_cursos import BancoCursos
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_area_name(area: str) -> str:
+    """
+    Normaliza o nome da área removendo acentos e convertendo para minúsculas.
+    Também mapeia nomes amigáveis para IDs de áreas.
+    """
+    # Mapeamento de nomes amigáveis para IDs
+    area_mapping = {
+        # IA
+        "ia": "ia",
+        "inteligencia artificial": "ia",
+        "inteligência artificial": "ia",
+        "ai": "ia",
+        
+        # Ciência de Dados
+        "ciencia de dados": "ciencia_dados",
+        "ciência de dados": "ciencia_dados",
+        "ciencia_dados": "ciencia_dados",
+        "data science": "ciencia_dados",
+        "cienciadados": "ciencia_dados",
+        
+        # Sustentabilidade
+        "sustentabilidade": "sustentabilidade",
+        "sustentavel": "sustentabilidade",
+        "sustentável": "sustentabilidade",
+        "meio ambiente": "sustentabilidade",
+        "ambiental": "sustentabilidade",
+        
+        # Programação
+        "programacao": "programacao",
+        "programação": "programacao",
+        "desenvolvimento": "programacao",
+        "software": "programacao",
+        "dev": "programacao",
+        
+        # Design
+        "design": "design",
+        "design grafico": "design",
+        "design gráfico": "design",
+        "ui/ux": "design",
+        "ui": "design",
+        "ux": "design",
+        
+        # Marketing Digital
+        "marketing digital": "marketing_digital",
+        "marketing_digital": "marketing_digital",
+        "marketing": "marketing_digital",
+        "digital marketing": "marketing_digital",
+        "marketingdigital": "marketing_digital",
+        
+        # Gestão
+        "gestao": "gestao",
+        "gestão": "gestao",
+        "administracao": "gestao",
+        "administração": "gestao",
+        "management": "gestao",
+        "gerenciamento": "gestao",
+        
+        # Vendas
+        "vendas": "vendas",
+        "vendas consultivas": "vendas",
+        "vendasconsultivas": "vendas",
+        "sales": "vendas",
+        "negociacao": "vendas",
+        "negociação": "vendas",
+        
+        # RH
+        "rh": "rh",
+        "recursos humanos": "rh",
+        "recursoshumanos": "rh",
+        "gestao de pessoas": "rh",
+        "gestão de pessoas": "rh",
+        "hr": "rh",
+        "human resources": "rh",
+        
+        # Finanças
+        "financas": "financas",
+        "finanças": "financas",
+        "financeiro": "financas",
+        "contabilidade": "financas",
+        "finance": "financas",
+        
+        # Saúde
+        "saude": "saude",
+        "saúde": "saude",
+        "saude e bem estar": "saude",
+        "saúde e bem estar": "saude",
+        "health": "saude",
+        "saudebemestar": "saude",
+        
+        # Educação
+        "educacao": "educacao",
+        "educação": "educacao",
+        "pedagogia": "educacao",
+        "ensino": "educacao",
+        "education": "educacao",
+        "ead": "educacao",
+    }
+    
+    # Normalizar: remover acentos e converter para minúsculas
+    area_normalized = unicodedata.normalize('NFD', area.lower().strip())
+    area_normalized = ''.join(char for char in area_normalized if unicodedata.category(char) != 'Mn')
+    
+    # Remover espaços extras e caracteres especiais
+    area_normalized = area_normalized.replace(' ', '_').replace('/', '').replace('-', '')
+    
+    # Verificar no mapeamento
+    if area_normalized in area_mapping:
+        return area_mapping[area_normalized]
+    
+    # Verificar também com espaços
+    area_with_spaces = area.lower().strip()
+    if area_with_spaces in area_mapping:
+        return area_mapping[area_with_spaces]
+    
+    # Se não está no mapeamento, retornar normalizado
+    return area_normalized
 
 
 class ServicoRecomendacoes:
@@ -134,18 +253,28 @@ Seja direto, pessoal e encorajador.
     
     def _filtrar_cursos_por_interesses(self, perfil: PerfilUsuario) -> List[Curso]:
         """Filtra cursos disponíveis pelas áreas de interesse do usuário"""
-        areas_interesse = {area.area for area in perfil.areas_interesse}
+        # Normalizar áreas de interesse do usuário para IDs do banco
+        areas_interesse_normalizadas = {
+            normalize_area_name(area.area) 
+            for area in perfil.areas_interesse
+        }
+        
+        logger.info(f"User interest areas (original): {[area.area for area in perfil.areas_interesse]}")
+        logger.info(f"User interest areas (normalized): {areas_interesse_normalizadas}")
         
         todos_cursos = self.banco_cursos.get_all_courses()
         
-        # Filtrar cursos que correspondem às áreas de interesse
+        # Filtrar cursos que correspondem às áreas de interesse normalizadas
         filtrados = [
             curso for curso in todos_cursos
-            if curso.area in areas_interesse
+            if curso.area in areas_interesse_normalizadas
         ]
+        
+        logger.info(f"Found {len(filtrados)} courses matching user interests out of {len(todos_cursos)} total")
         
         # Se não houver cursos nas áreas exatas, incluir cursos relacionados
         if not filtrados:
+            logger.warning(f"No courses found for areas: {areas_interesse_normalizadas}. Using fallback.")
             filtrados = todos_cursos[:10]  # Retornar top 10 como fallback
         
         return filtrados
@@ -311,8 +440,9 @@ Priorize cursos que:
     ) -> List[Dict[str, Any]]:
         """Recomendações básicas em caso de erro na IA"""
         
-        # Ordenar por nível e área de interesse
-        areas_interesse = {area.area for area in perfil.areas_interesse}
+        # Normalizar áreas de interesse para IDs do banco
+        areas_interesse = {normalize_area_name(area.area) for area in perfil.areas_interesse}
+        logger.info(f"Fallback: normalized interest areas: {areas_interesse}")
         
         cursos_com_score = []
         for curso in cursos:
