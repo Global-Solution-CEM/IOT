@@ -192,6 +192,13 @@ análises de compatibilidade detalhadas."""
                 limit
             )
             
+            logger.info(f"IA retornou {len(recomendacoes_ia)} recomendações brutas")
+            
+            # Se IA não retornou recomendações, usar fallback
+            if not recomendacoes_ia or len(recomendacoes_ia) == 0:
+                logger.warning("IA não retornou recomendações, usando fallback")
+                return self._recomendacoes_fallback(perfil_usuario, cursos_disponiveis, limit)
+            
             # Processar e enriquecer recomendações
             recomendacoes = await self._processar_recomendacoes(
                 recomendacoes_ia,
@@ -199,7 +206,13 @@ análises de compatibilidade detalhadas."""
                 cursos_disponiveis
             )
             
-            logger.info(f"Generated {len(recomendacoes)} recommendations")
+            logger.info(f"Processadas {len(recomendacoes)} recomendações finais")
+            
+            # Se após processar ficou vazio, usar fallback
+            if not recomendacoes or len(recomendacoes) == 0:
+                logger.warning("Após processar, nenhuma recomendação válida. Usando fallback")
+                return self._recomendacoes_fallback(perfil_usuario, cursos_disponiveis, limit)
+            
             return recomendacoes[:limit]
             
         except Exception as e:
@@ -375,10 +388,28 @@ Priorize cursos que:
                 system_context=self.SYSTEM_CONTEXT
             )
             
-            return result.get("recommendations", [])
+            logger.info(f"Resposta da IA (keys): {list(result.keys()) if isinstance(result, dict) else 'not a dict'}")
+            
+            # Tentar diferentes formatos de resposta
+            recommendations = result.get("recommendations", [])
+            
+            # Se não encontrou, tentar buscar em raw_response
+            if not recommendations and "raw_response" in result:
+                logger.warning("Resposta da IA em raw_response, tentando parsear")
+                import json
+                try:
+                    raw = result["raw_response"]
+                    if isinstance(raw, str):
+                        parsed = json.loads(raw)
+                        recommendations = parsed.get("recommendations", [])
+                except:
+                    pass
+            
+            logger.info(f"Recomendações extraídas: {len(recommendations)}")
+            return recommendations if recommendations else []
             
         except Exception as e:
-            logger.error(f"Error getting AI recommendations: {str(e)}")
+            logger.error(f"Error getting AI recommendations: {str(e)}", exc_info=True)
             return []
     
     async def _processar_recomendacoes(
@@ -394,11 +425,14 @@ Priorize cursos que:
         # Criar mapa de cursos por ID
         mapa_cursos = {curso.id: curso for curso in cursos_disponiveis}
         
-        for rec_ia in recomendacoes_ia:
-            curso_id = rec_ia.get("course_id")
+        logger.info(f"Processando {len(recomendacoes_ia)} recomendações da IA contra {len(cursos_disponiveis)} cursos disponíveis")
+        
+        for idx, rec_ia in enumerate(recomendacoes_ia):
+            curso_id = rec_ia.get("course_id") or rec_ia.get("id")
             curso = mapa_cursos.get(curso_id)
             
             if not curso:
+                logger.warning(f"Curso ID '{curso_id}' não encontrado nos cursos disponíveis. Disponíveis: {list(mapa_cursos.keys())[:5]}...")
                 continue  # Pular se curso não encontrado
             
             # Enriquecer com explicação personalizada se não vier completa da IA
@@ -442,7 +476,12 @@ Priorize cursos que:
         
         # Normalizar áreas de interesse para IDs do banco
         areas_interesse = {normalize_area_name(area.area) for area in perfil.areas_interesse}
-        logger.info(f"Fallback: normalized interest areas: {areas_interesse}")
+        logger.info(f"Fallback: normalized interest areas: {areas_interesse}, cursos disponíveis: {len(cursos)}")
+        
+        # Se não há cursos, retornar vazio
+        if not cursos:
+            logger.warning("Fallback: nenhum curso disponível")
+            return []
         
         cursos_com_score = []
         for curso in cursos:
@@ -451,6 +490,14 @@ Priorize cursos que:
             # Aumentar score se estiver nas áreas de interesse
             if curso.area in areas_interesse:
                 score += 0.2
+            
+            # Verificar nível do usuário para essa área
+            for area_interesse in perfil.areas_interesse:
+                area_normalizada = normalize_area_name(area_interesse.area)
+                if curso.area == area_normalizada:
+                    # Ajustar score baseado no nível
+                    if curso.nivel == area_interesse.nivel:
+                        score += 0.1
             
             cursos_com_score.append({
                 "course": {
@@ -463,12 +510,14 @@ Priorize cursos que:
                     "icone": curso.icone
                 },
                 "score": score,
-                "reason": f"Recomendado baseado no seu interesse em {curso.area}.",
-                "compatibility": f"Compatível com seu nível de conhecimento.",
+                "reason": f"Este curso de {curso.area} foi recomendado porque se alinha com suas áreas de interesse e está adequado ao seu nível de conhecimento.",
+                "compatibility": f"Compatível com seu perfil: nível {curso.nivel} na área de {curso.area}.",
                 "suggested_learning_path": None
             })
         
         cursos_com_score.sort(key=lambda x: x["score"], reverse=True)
-        return cursos_com_score[:limit]
+        resultado = cursos_com_score[:limit]
+        logger.info(f"Fallback: retornando {len(resultado)} recomendações")
+        return resultado
 
 
