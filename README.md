@@ -67,16 +67,24 @@ Este projeto demonstra uma aplicação baseada em **Deep Learning** que resolve 
    pip install -r requirements.txt
    ```
 
-4. **Configure as variáveis de ambiente**:
+4. **Configure as variáveis de ambiente** (Opcional - para usar IA real):
    ```bash
+   # Navegue para a pasta backend
+   cd backend
+   
    # Copie o arquivo de exemplo
+   # Windows:
+   copy .env.example .env
+   
+   # Linux/Mac:
    cp .env.example .env
    
-   # Edite .env e adicione sua chave do Gemini (opcional)
-   # O sistema funciona em modo mock sem a chave
+   # Edite .env e adicione sua chave do Gemini
+   # Obtenha sua chave em: https://makersuite.google.com/app/apikey
    GEMINI_API_KEY=sua_chave_aqui
-   PORT=8000
    ```
+   
+   **Nota**: Se você não configurar a chave, o sistema funcionará em **modo mock** (respostas simuladas) para desenvolvimento e testes. Para produção, configure a chave real.
 
 5. **Execute o servidor**:
    ```bash

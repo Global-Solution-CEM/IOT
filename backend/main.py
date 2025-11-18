@@ -14,6 +14,10 @@ import os
 from datetime import datetime
 import logging
 import unicodedata
+from dotenv import load_dotenv
+
+# Carregar variáveis de ambiente do arquivo .env
+load_dotenv()
 
 from services.servico_ia import AIService
 from services.servico_recomendacoes import ServicoRecomendacoes
