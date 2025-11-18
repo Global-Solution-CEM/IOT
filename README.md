@@ -242,7 +242,36 @@ O sistema funciona em **modo mock** sem necessidade de API key do Gemini:
 - Permite testar toda a integração
 - Para produção, configure a API key real no arquivo `.env`
 
-## 🚀 Deploy
+## 🚀 Deploy e Execução Automática
+
+### Executar Automaticamente no Windows (PM2)
+
+Para fazer a API rodar automaticamente sem precisar iniciar manualmente:
+
+```bash
+# 1. Instalar PM2 (se ainda não tiver)
+npm install -g pm2
+
+# 2. Iniciar a API com PM2
+cd backend
+pm2 start ecosystem.config.js
+
+# 3. Configurar para iniciar automaticamente
+pm2 startup
+pm2 save
+```
+
+**Comandos úteis:**
+```bash
+pm2 list                    # Ver processos rodando
+pm2 logs aprenda-plus-api   # Ver logs
+pm2 stop aprenda-plus-api   # Parar
+pm2 restart aprenda-plus-api  # Reiniciar
+```
+
+Veja `backend/COMO_RODAR_SEMPRE.md` para instruções completas.
+
+### Deploy em Produção (Cloud)
 
 Para deploy em produção (Railway, Render, Heroku, etc.):
 1. Configure `GEMINI_API_KEY` nas variáveis de ambiente
