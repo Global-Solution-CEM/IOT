@@ -12,39 +12,93 @@ echo ""
 export RESOURCE_GROUP=AprendaPlusRG
 export LOCATION=brazilsouth
 export APP_SERVICE_PLAN=aprenda-plus-plan
-export WEBAPP_NAME=aprenda-plus-api
+export WEBAPP_NAME="${WEBAPP_NAME:-aprenda-plus-api}"
 export GEMINI_API_KEY="${GEMINI_API_KEY:-}"
 
-echo "📋 Variáveis configuradas:"
+echo "📋 Variáveis iniciais:"
 echo "   RESOURCE_GROUP: $RESOURCE_GROUP"
 echo "   LOCATION: $LOCATION"
 echo "   APP_SERVICE_PLAN: $APP_SERVICE_PLAN"
 echo "   WEBAPP_NAME: $WEBAPP_NAME"
 echo ""
-
-# 1. Criar Resource Group
-echo "🔨 Criando Resource Group..."
-az group create \
-  --name $RESOURCE_GROUP \
-  --location $LOCATION
-
-# 2. Criar App Service Plan (Free tier)
+echo "ℹ️  Nota: As variáveis podem ser ajustadas automaticamente se recursos já existirem"
 echo ""
-echo "🔨 Criando App Service Plan..."
-az appservice plan create \
-  --name $APP_SERVICE_PLAN \
-  --resource-group $RESOURCE_GROUP \
-  --sku FREE \
-  --is-linux
 
-# 3. Criar Web App
+# 1. Criar ou verificar Resource Group
+echo "🔍 Verificando Resource Group..."
+if az group show --name $RESOURCE_GROUP &>/dev/null; then
+  echo "✓ Resource Group já existe"
+else
+  echo "🔨 Criando Resource Group..."
+  az group create \
+    --name $RESOURCE_GROUP \
+    --location $LOCATION
+fi
+
+# 2. Verificar se App Service Plan já existe
 echo ""
-echo "🔨 Criando Web App..."
-az webapp create \
-  --resource-group $RESOURCE_GROUP \
-  --plan $APP_SERVICE_PLAN \
-  --name $WEBAPP_NAME \
-  --runtime "PYTHON:3.11"
+echo "🔍 Verificando App Service Plan..."
+if az appservice plan show --name $APP_SERVICE_PLAN --resource-group $RESOURCE_GROUP &>/dev/null; then
+  echo "✓ App Service Plan já existe"
+else
+  echo "🔨 Criando App Service Plan..."
+  az appservice plan create \
+    --name $APP_SERVICE_PLAN \
+    --resource-group $RESOURCE_GROUP \
+    --sku FREE \
+    --is-linux
+fi
+
+# 3. Verificar se o nome da Web App já existe em outro Resource Group
+echo ""
+echo "🔍 Verificando disponibilidade do nome da Web App..."
+EXISTING_APP_INFO=$(az webapp list --query "[?name=='$WEBAPP_NAME'].{name:name, rg:resourceGroup}" -o json 2>/dev/null || echo "[]")
+EXISTING_RG=$(echo "$EXISTING_APP_INFO" | grep -o '"rg": "[^"]*"' | cut -d'"' -f4 | head -1)
+
+if [ -n "$EXISTING_RG" ] && [ "$EXISTING_RG" != "$RESOURCE_GROUP" ]; then
+  echo "⚠ O nome '$WEBAPP_NAME' já existe no Resource Group: $EXISTING_RG"
+  echo "   Você está tentando usar o Resource Group: $RESOURCE_GROUP"
+  echo ""
+  echo "🔄 Ajustando para usar o Resource Group existente..."
+  RESOURCE_GROUP=$EXISTING_RG
+  echo "✓ Usando Resource Group: $RESOURCE_GROUP"
+  
+  # Verificar se o App Service Plan existe neste Resource Group
+  if ! az appservice plan show --name $APP_SERVICE_PLAN --resource-group $RESOURCE_GROUP &>/dev/null; then
+    echo "⚠ App Service Plan '$APP_SERVICE_PLAN' não existe em $RESOURCE_GROUP"
+    EXISTING_PLAN=$(az appservice plan list --resource-group $RESOURCE_GROUP --query "[0].name" -o tsv 2>/dev/null || echo "")
+    if [ -n "$EXISTING_PLAN" ]; then
+      APP_SERVICE_PLAN=$EXISTING_PLAN
+      echo "✓ Usando App Service Plan existente: $APP_SERVICE_PLAN"
+    else
+      echo "🔨 Criando App Service Plan no Resource Group existente..."
+      az appservice plan create \
+        --name $APP_SERVICE_PLAN \
+        --resource-group $RESOURCE_GROUP \
+        --sku FREE \
+        --is-linux
+    fi
+  fi
+fi
+
+# Criar ou verificar Web App
+echo ""
+echo "🔨 Verificando/Criando Web App: $WEBAPP_NAME..."
+if az webapp show --name $WEBAPP_NAME --resource-group $RESOURCE_GROUP &>/dev/null; then
+  echo "✓ Web App já existe, atualizando configurações..."
+else
+  echo "🔨 Criando nova Web App..."
+  az webapp create \
+    --resource-group $RESOURCE_GROUP \
+    --plan $APP_SERVICE_PLAN \
+    --name $WEBAPP_NAME \
+    --runtime "PYTHON:3.11" || {
+      echo "✗ Erro ao criar Web App."
+      echo "   O nome pode estar em uso globalmente. Tente:"
+      echo "   export WEBAPP_NAME=aprenda-plus-api-$(date +%s | tail -c 5)"
+      exit 1
+    }
+fi
 
 # 4. Configurar variáveis de ambiente
 echo ""

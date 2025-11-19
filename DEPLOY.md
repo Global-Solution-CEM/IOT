@@ -39,6 +39,14 @@ chmod +x deploy-azure.sh
 # Deploy com GEMINI_API_KEY
 export GEMINI_API_KEY="sua_chave_aqui"
 ./deploy-azure.sh
+
+# Se o nome da app já existe, use um nome diferente:
+export WEBAPP_NAME="aprenda-plus-api-unico"
+./deploy-azure.sh
+
+# Ou use o Resource Group existente:
+export RESOURCE_GROUP="rg-aprenda-plus"
+./deploy-azure.sh
 ```
 
 ## 📋 O que o script faz
