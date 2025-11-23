@@ -4,7 +4,7 @@ Sistema completo de recomendações personalizadas de cursos usando **IA Generat
 
 ## 📹 Apresentação
 
-🎥 **Vídeo do Projeto**: [Assistir no YouTube](https://youtu.be/OpTNN2tZxh0)
+🎥 **Vídeo do Projeto**: https://youtu.be/OpTNN2tZxh0
 
 ## 👥 Integrantes do Grupo
 
