@@ -202,34 +202,6 @@ BASE_URL: 'http://localhost:8000/api'  // Desenvolvimento
 BASE_URL: 'https://sua-api-producao.com/api'  // Produção
 ```
 
-## 📊 Critérios de Avaliação
-
-### ✅ [60 pontos] Cumprimento dos Requisitos Técnicos
-- ✅ Implementação técnica em Deep Learning (IA Generativa)
-- ✅ Funcionamento da IA com Google Gemini API
-- ✅ Integração da API REST funcional
-- ✅ Documentação completa do modelo
-- ✅ Aderência aos requisitos obrigatórios
-
-### ✅ [20 pontos] Integração Interdisciplinar
-- ✅ Integração efetiva com app mobile React Native
-- ✅ Arquitetura coerente do sistema
-- ✅ Fluxo de dados completo (Mobile → API → IA → Mobile)
-- ✅ Interface funcional que consome resultados da IA
-
-### ✅ [10 pontos] Boas Práticas de Código
-- ✅ Organização clara e modular
-- ✅ README completo com instruções
-- ✅ Documentação inline
-- ✅ Estrutura de pastas lógica
-- ✅ Tratamento de erros
-
-### ✅ [10 pontos] Apresentação
-- ✅ Código executável e testável
-- ✅ Exemplos de uso incluídos
-- ✅ Scripts de teste prontos
-- ✅ Documentação completa para demonstração
-
 ## 🛠️ Tecnologias Utilizadas
 
 - **Python 3.10+**: Linguagem base do backend
