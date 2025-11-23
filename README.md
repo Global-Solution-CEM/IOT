@@ -2,6 +2,16 @@
 
 Sistema completo de recomendações personalizadas de cursos usando **IA Generativa (Google Gemini)** integrado com o app mobile React Native "Aprenda Plus".
 
+## 📹 Apresentação
+
+🎥 **Vídeo do Projeto**: [Assistir no YouTube](https://youtu.be/OpTNN2tZxh0)
+
+## 👥 Integrantes do Grupo
+
+- **Cícero Gabriel Oliveira Serafim** – RM556996
+- **Eduardo Miguel Forato Monteiro** – RM555871
+- **Murillo Ari Sant'Anna** – RM557183
+
 ## 🎯 Visão Geral
 
 Este projeto demonstra uma aplicação baseada em **Deep Learning** que resolve o problema de recomendações personalizadas de cursos educacionais, integrada às disciplinas de **Desenvolvimento Web** e **Mobile**.
